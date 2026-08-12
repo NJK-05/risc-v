@@ -1,7 +1,4 @@
 // RV32I ALU
-// alu_op encoding is our own internal choice (produced later by alu_control.v,
-// which will decode funct3/funct7/opcode into these). Defined here first since
-// alu_control just needs to target this interface.
 
 module alu (
     input  wire [31:0] a,

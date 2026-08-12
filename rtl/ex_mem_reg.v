@@ -1,9 +1,4 @@
 // EX/MEM Pipeline Register
-// Latches execute-stage outputs for use in memory access.
-//
-// Carries branch_target/branch_taken forward per the M2 plan, for M5's
-// flush logic to consume later. M2 note: stall/flush wired in now, tied
-// to 0 in riscv_core_top.v until M4/M5 drive them.
 
 module ex_mem_reg (
     input  wire        clk,

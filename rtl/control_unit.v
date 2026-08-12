@@ -15,10 +15,6 @@
 //   branch     - this is a conditional branch instruction
 //   jump       - this is an unconditional jump (JAL/JALR)
 //   alu_op     - coarse op sent to alu_control.v (see alu_control.v header)
-//
-// NOTE: actual branch/jump target address calculation (PC+imm) lives in the
-// top-level datapath via a dedicated adder, not here - this module only
-// produces flags and ALU control, not addresses.
 
 module control_unit (
     input  wire [6:0] opcode,

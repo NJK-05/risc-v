@@ -1,22 +1,3 @@
-// 5-stage pipelined RV32I core - M2 milestone
-// IF -> ID -> EX -> MEM -> WB, connected via if_id_reg, id_ex_reg,
-// ex_mem_reg, mem_wb_reg.
-//
-// M2 SCOPE (deliberate, documented limitations - see project context):
-//   - No forwarding (M3): back-to-back dependent instructions read stale
-//     regfile values in ID if the producer hasn't reached WB yet. Verify
-//     by manually inserting NOPs between dependent instructions.
-//   - No load-use stall (M4): a load immediately followed by a dependent
-//     instruction is a strict subset of the above - also needs manual NOPs.
-//   - No branch/jump flush (M5): branch/jump resolution happens in EX
-//     (see pc_src_ex/pc_target_ex below) and DOES correctly redirect the
-//     PC, but the two instructions already fetched into if_id_reg and
-//     id_ex_reg at that point are NOT squashed yet. They will continue
-//     down the pipeline and may incorrectly execute (write regs / access
-//     memory). Avoid testing taken branches/jumps until M5.
-//   All four pipeline registers already expose stall/flush ports for M3-M5
-//   to drive; every one is tied to 1'b0 here for M2.
-
 module riscv_core_top (
     input wire clk,
     input wire rst_n

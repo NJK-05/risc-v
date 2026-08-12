@@ -1,10 +1,5 @@
 // MEM/WB Pipeline Register
 // Latches memory-stage outputs for use in write-back.
-//
-// M2 note: stall/flush wired in now, tied to 0 in riscv_core_top.v until
-// M4/M5 drive them. In practice this register is rarely stalled/flushed
-// (WB never blocks anything downstream), but the ports are kept for
-// consistency with the other three registers.
 
 module mem_wb_reg (
     input  wire        clk,

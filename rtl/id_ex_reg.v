@@ -1,10 +1,4 @@
 // ID/EX Pipeline Register
-// Latches decode-stage outputs for use in execute.
-//
-// M2 note: stall/flush wired in now for M4/M5 to drive later; tied to 0 in
-// riscv_core_top.v for M2. Control signals reset/flush to control_unit.v's
-// own safe-NOP defaults (all zero) so a squashed instruction does nothing
-// in every later stage.
 
 module id_ex_reg (
     input  wire        clk,

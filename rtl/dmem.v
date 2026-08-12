@@ -1,8 +1,5 @@
 // Data memory - simulation model
-// Byte-addressable, little-endian, supports LB/LH/LW/LBU/LHU and SB/SH/SW
-// sizing via funct3 (the same funct3 field already decoded from the
-// instruction - load/store size doesn't need to go through control_unit
-// since it's directly derivable here).
+// Byte-addressable, little-endian, supports LB/LH/LW/LBU/LHU and SB/SH/SW sizing via funct3 
 
 module dmem #(
     parameter DEPTH = 4096   // bytes (4KB default)

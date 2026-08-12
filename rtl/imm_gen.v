@@ -1,6 +1,5 @@
 // RV32I Immediate Generator
 // Decodes the correct sign-extended immediate for each instruction format
-// based on opcode. Combinational only - this just rearranges instruction bits.
 
 module imm_gen (
     input  wire [31:0] instr,

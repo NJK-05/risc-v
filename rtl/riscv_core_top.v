@@ -23,17 +23,19 @@ module riscv_core_top (
     assign pc_plus4_if = pc + 32'd4;
 
     // Redirected by EX-stage branch/jump resolution (see below); flush
-    // not yet applied to in-flight instructions.
+    // not yet applied to in-flight instructions. Held at current PC
+    // during a load-use stall (see hazard_detection_unit below).
     wire        pc_src_ex;
     wire [31:0] pc_target_ex;
-    assign pc_next = pc_src_ex ? pc_target_ex : pc_plus4_if;
+    wire        stall_hazard;
+    assign pc_next = stall_hazard ? pc : (pc_src_ex ? pc_target_ex : pc_plus4_if);
 
     // ---- IF/ID ----
     wire [31:0] if_id_pc, if_id_pc_plus4, if_id_instr;
 
     if_id_reg if_id_reg_inst (
         .clk(clk), .rst_n(rst_n),
-        .stall(1'b0), .flush(1'b0),
+        .stall(stall_hazard), .flush(1'b0),
         .pc_in(pc), .pc_plus4_in(pc_plus4_if), .instr_in(instr_if),
         .pc_out(if_id_pc), .pc_plus4_out(if_id_pc_plus4), .instr_out(if_id_instr)
     );
@@ -85,7 +87,7 @@ module riscv_core_top (
 
     id_ex_reg id_ex_reg_inst (
         .clk(clk), .rst_n(rst_n),
-        .stall(1'b0), .flush(1'b0),
+        .stall(1'b0), .flush(stall_hazard),
         .pc_in(if_id_pc), .pc_plus4_in(if_id_pc_plus4),
         .rs1_data_in(rs1_data_id), .rs2_data_in(rs2_data_id), .imm_in(imm_id),
         .rs1_addr_in(rs1_addr_id), .rs2_addr_in(rs2_addr_id), .rd_addr_in(rd_addr_id),
@@ -101,6 +103,15 @@ module riscv_core_top (
         .reg_write_out(id_ex_reg_write), .alu_src_out(id_ex_alu_src), .alu_src_a_out(id_ex_alu_src_a),
         .mem_read_out(id_ex_mem_read), .mem_write_out(id_ex_mem_write), .result_src_out(id_ex_result_src),
         .branch_out(id_ex_branch), .jump_out(id_ex_jump), .alu_op_out(id_ex_alu_op)
+    );
+
+    // Load-use hazard: load in EX, dependent instruction right behind it
+    // in ID -> stall PC + IF/ID for 1 cycle, bubble ID/EX. EX/MEM and
+    // MEM/WB keep advancing normally.
+    hazard_detection_unit hazard_detection_unit_inst (
+        .id_ex_mem_read(id_ex_mem_read), .id_ex_rd_addr(id_ex_rd_addr),
+        .rs1_addr_id(rs1_addr_id), .rs2_addr_id(rs2_addr_id),
+        .stall(stall_hazard)
     );
 
     // ================= EX stage =================

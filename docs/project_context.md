@@ -201,3 +201,40 @@ With forwarding, the 3-NOP spacing M2 needed is gone for ALU-producer chains —
 ### Testbench
 
 `tb/tb_core_top_m3.v` (module name `tb_core_top_m3`) reuses M2's instruction mix with the NOP padding stripped out, keeping only the single load-use NOP. All 6 final-register checks pass. Verified the test isn't trivially passing by temporarily removing the load-use NOP in a scratch build — `x7` came out `0` instead of `30`, confirming the hazard is real and the testbench is actually catching it.
+
+## M4 — Load-use stall added
+
+Status: ✅ Done. Update the milestone table (§6) and mark M5 as next up.
+
+### Modules added
+
+| Module | Purpose |
+|---|---|
+| `hazard_detection_unit.v` | Detects a load in EX whose destination matches a source register of the instruction currently in ID; outputs a 1-bit `stall` |
+
+`riscv_core_top.v` was updated: `pc_next` now holds at the current `pc` (instead of `pc_plus4`/branch target) when `stall_hazard` is asserted; `if_id_reg`'s `stall` port is now driven by `stall_hazard` instead of tied to `0`; `id_ex_reg`'s `flush` port is now driven by `stall_hazard` (inserts a bubble). `ex_mem_reg` and `mem_wb_reg` are untouched — they keep advancing every cycle regardless of the stall.
+
+### Design decisions made during M4
+
+- **PC stall is done via the `pc_next` mux, not a new port on `pc_reg.v`.** Since I don't have that module's source, holding `pc_next = pc` when stalling reproduces "freeze the PC" without needing to add an enable input to a module I can't see or modify safely.
+- **Only PC, IF/ID, and ID/EX participate in the stall.** The load itself (currently in EX) must keep moving into MEM normally — stalling it too would never let it finish and resolve the hazard. This is why `ex_mem_reg`/`mem_wb_reg` stay untouched.
+- **The bubble is created via `id_ex_reg`'s existing `flush` port**, not a new mechanism — same all-zero-control bubble that M2's reset/flush path already produces, so it's inert as it moves through EX/MEM/WB.
+
+### Verification
+
+Confirmed the stall is actually doing the work, not coincidentally passing, two ways:
+1. Ran M3's testbench (with its 1 manual load-use NOP) against the M4 top — no regression, still passes.
+2. Built `tb_core_top_m4.v`: same program with that NOP *removed*, relying entirely on the automatic stall — passes, `x7 = 30`.
+3. **Negative control**: temporarily hard-wired `hazard_detection_unit`'s `stall` output to `0` and re-ran the M4 testbench — `x7` came out `0` (the same silent address-as-data bug documented in M3), and it cascaded into `x8` too. Restored the real hazard unit before delivering.
+
+### Minimum spacing, updated from M3
+
+With M4, there is no longer any hazard case that requires a manual NOP. Every dependency chain in the test programs so far — including load-use — resolves automatically via forwarding + stalling.
+
+### What's still outstanding
+
+Only M5 remains for hazard handling: branch/jump flush. EX-stage resolution already redirects the PC correctly; the two stale in-flight instructions in `if_id_reg`/`id_ex_reg` at that point are still not squashed. Avoid testing taken branches/jumps until M5.
+
+### Testbench
+
+`tb/tb_core_top_m4.v` (module name `tb_core_top_m4`).

@@ -1,3 +1,9 @@
+// 5-stage pipelined RV32I core.
+// IF -> ID -> EX -> MEM -> WB via if_id_reg, id_ex_reg, ex_mem_reg, mem_wb_reg.
+// Forwarding resolves EX-stage RAW hazards from EX/MEM and MEM/WB.
+// Not yet handled: load-use stall, branch/jump flush (stale in-flight
+// instructions on a taken branch aren't squashed yet).
+
 module riscv_core_top (
     input wire clk,
     input wire rst_n
@@ -16,9 +22,8 @@ module riscv_core_top (
 
     assign pc_plus4_if = pc + 32'd4;
 
-    // Redirected by EX-stage branch/jump resolution (see below).
-    // NOTE (M2 limitation): redirect works, but the stale instructions
-    // already in-flight are not flushed until M5.
+    // Redirected by EX-stage branch/jump resolution (see below); flush
+    // not yet applied to in-flight instructions.
     wire        pc_src_ex;
     wire [31:0] pc_target_ex;
     assign pc_next = pc_src_ex ? pc_target_ex : pc_plus4_if;
@@ -28,7 +33,7 @@ module riscv_core_top (
 
     if_id_reg if_id_reg_inst (
         .clk(clk), .rst_n(rst_n),
-        .stall(1'b0), .flush(1'b0),   // TODO M5: flush(pc_src_ex)
+        .stall(1'b0), .flush(1'b0),
         .pc_in(pc), .pc_plus4_in(pc_plus4_if), .instr_in(instr_if),
         .pc_out(if_id_pc), .pc_plus4_out(if_id_pc_plus4), .instr_out(if_id_instr)
     );
@@ -80,7 +85,7 @@ module riscv_core_top (
 
     id_ex_reg id_ex_reg_inst (
         .clk(clk), .rst_n(rst_n),
-        .stall(1'b0), .flush(1'b0),   // TODO M4: stall(load_use_hazard), M5: flush(pc_src_ex)
+        .stall(1'b0), .flush(1'b0),
         .pc_in(if_id_pc), .pc_plus4_in(if_id_pc_plus4),
         .rs1_data_in(rs1_data_id), .rs2_data_in(rs2_data_id), .imm_in(imm_id),
         .rs1_addr_in(rs1_addr_id), .rs2_addr_in(rs2_addr_id), .rd_addr_in(rd_addr_id),
@@ -105,16 +110,36 @@ module riscv_core_top (
         .alu_ctrl(alu_ctrl)
     );
 
+    // Forwarding resolves RAW hazards from EX/MEM and MEM/WB. Load-use
+    // (producer is a load, consumer immediately after) still needs a
+    // stall or 1 manual NOP - EX/MEM only holds a load's address, not
+    // its data, until MEM completes.
+    wire [1:0] forward_a, forward_b;
+    forwarding_unit forwarding_unit_inst (
+        .id_ex_rs1_addr(id_ex_rs1_addr), .id_ex_rs2_addr(id_ex_rs2_addr),
+        .ex_mem_rd_addr(ex_mem_rd_addr), .ex_mem_reg_write(ex_mem_reg_write),
+        .mem_wb_rd_addr(mem_wb_rd_addr), .mem_wb_reg_write(mem_wb_reg_write),
+        .forward_a(forward_a), .forward_b(forward_b)
+    );
+
+    wire [31:0] fwd_rs1_data = (forward_a == 2'b10) ? ex_mem_alu_result :
+                                (forward_a == 2'b01) ? write_back_data :
+                                id_ex_rs1_data;
+
+    wire [31:0] fwd_rs2_data = (forward_b == 2'b10) ? ex_mem_alu_result :
+                                (forward_b == 2'b01) ? write_back_data :
+                                id_ex_rs2_data;
+
     wire [31:0] alu_a, alu_b, alu_result;
     wire        alu_zero;
 
-    // ALU operand A: rs1 (default), PC (AUIPC), or zero (LUI)
+    // ALU operand A: rs1 (default, forwarded), PC (AUIPC), or zero (LUI)
     assign alu_a = (id_ex_alu_src_a == 2'b01) ? id_ex_pc :
                    (id_ex_alu_src_a == 2'b10) ? 32'd0 :
-                   id_ex_rs1_data;
+                   fwd_rs1_data;
 
-    // ALU operand B: rs2 (R-type/branch) or immediate (everything else)
-    assign alu_b = id_ex_alu_src ? id_ex_imm : id_ex_rs2_data;
+    // ALU operand B: rs2 (R-type/branch, forwarded) or immediate (everything else)
+    assign alu_b = id_ex_alu_src ? id_ex_imm : fwd_rs2_data;
 
     alu alu_inst (
         .a(alu_a), .b(alu_b), .alu_op(alu_ctrl),
@@ -162,7 +187,7 @@ module riscv_core_top (
     ex_mem_reg ex_mem_reg_inst (
         .clk(clk), .rst_n(rst_n),
         .stall(1'b0), .flush(1'b0),
-        .alu_result_in(alu_result), .rs2_data_in(id_ex_rs2_data),
+        .alu_result_in(alu_result), .rs2_data_in(fwd_rs2_data),
         .pc_plus4_in(id_ex_pc_plus4), .rd_addr_in(id_ex_rd_addr),
         .funct3_in(id_ex_funct3),
         .branch_target_in(branch_target_ex), .branch_taken_in(ex_branch_taken),

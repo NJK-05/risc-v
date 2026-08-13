@@ -126,6 +126,78 @@ independently testable against a targeted hazard scenario.
 > flushing; verified with self-checking testbenches and moving toward
 > synthesis and ASIC layout via the OpenLane/SKY130 open-source flow.
 
+## M2 — Pipeline registers added (no hazard handling yet)
+
+Status: ✅ Done. Update the milestone table (§6) and mark M3 as next up.
+
+### Modules added
+
+| Module | Purpose |
+|---|---|
+| `if_id_reg.v` | Latches {PC, PC+4, instruction} between IF and ID |
+| `id_ex_reg.v` | Latches {control signals, rs1_data, rs2_data, imm, rs1_addr, rs2_addr, rd_addr, funct3, funct7_5} between ID and EX |
+| `ex_mem_reg.v` | Latches {ALU result, rs2_data, rd_addr, control signals, branch_target, branch_taken, pc_plus4, funct3} between EX and MEM |
+| `mem_wb_reg.v` | Latches {mem read data, ALU result, pc_plus4, rd_addr, control signals} between MEM and WB |
+
+`riscv_core_top.v` was rewritten from the M1 single-cycle datapath to the 5-stage pipelined version, wired through all four registers above. The M1 version is preserved in git history (see below) rather than kept as a separate file in `rtl/`.
+
+### Design decisions made during M2
+
+- **Every pipeline register exposes `stall`/`flush` ports now**, tied to `1'b0` in `riscv_core_top.v` for M2. This is so M3 (forwarding — doesn't need these), M4 (load-use stall), and M5 (branch/jump flush) can wire up real logic without touching the register modules again.
+- **Branch/jump resolution happens in EX**, not ID. `branch_target = id_ex_pc + id_ex_imm` (shared by branches and JAL); JALR uses the ALU result with the LSB cleared instead. This mirrors the field list already decided for `ex_mem_reg.v` (which carries `branch_target`/`branch_taken` forward).
+- **JAL vs. JALR is distinguished without adding an opcode field to the pipeline registers.** `control_unit.v` already sets `alu_src=0` for JAL and `alu_src=1` for JALR, so `jump & ~alu_src` / `jump & alu_src` does it for free.
+- **On reset or flush, control signals clear to the same all-zero state `control_unit.v`'s default case already treats as a safe NOP** — so a squashed/reset pipeline stage behaves identically to a real decoded NOP flowing through.
+
+### Known, deliberate M2 limitations
+
+These are expected at this stage, not bugs — each is addressed by a later milestone:
+
+- **No forwarding (M3).** A dependent instruction placed immediately after its producer reads a stale regfile value. Verified around this for now by manually inserting NOPs (minimum safe gap: 3 NOPs / 4-instruction spacing between producer and consumer, given the 4-cycle IF→WB latency).
+- **No load-use stall (M4).** Same underlying issue as above, specific to loads.
+- **No branch/jump flush (M5).** EX-stage resolution *does* correctly redirect the PC on a taken branch/jump, but the two instructions already fetched into `if_id_reg`/`id_ex_reg` at that point are not squashed — they continue down the pipeline and may incorrectly execute. Avoid testing taken branches/jumps until M5. The M2 testbench deliberately excludes them for this reason.
+
+### Testbench
+
+`tb/tb_core_top_m2.v` (module name `tb_core_top_m2`, to avoid colliding with M1's `tb_core_top` — both testbenches live in the project simultaneously, switch "Set as Top" in Vivado's Sources panel depending on which one you're running).
+
+Straight-line program only (no branches), exercising I-type→R-type, R-type→store, load→R-type, and R-type→I-type dependency chains, each spaced at the minimum-safe 3-NOP gap. Checks two things:
+1. Final register values (x1, x2, x3, x4, x7, x8) — same style as the M1 testbench.
+2. Stage-by-stage pipeline flow for the first instruction — confirms it appears in `if_id_reg`, `id_ex_reg`, `ex_mem_reg`, `mem_wb_reg`, and finally the regfile at exactly the expected cycle, directly verifying the 4-cycle IF→WB latency rather than only checking the end result.
+
+Passed against real `control_unit.v`/`imem.v` plus minimal functional stand-ins for the other modules (sandbox elaboration check only — final confirmation is your own Vivado run).
+
+Gotcha worth remembering for future testbenches: checking a registered signal (e.g. a pipeline register's output) immediately after `@(posedge clk)` reads the pre-update value, since nonblocking assignments don't settle until the NBA region, which runs after the testbench process resumes. Fix: add a small `#1;` delay after the edge before checking — same pattern the M1 testbench already used before its final checks block.
+
+### Toolchain note
+
+Project is now tracked in git (was not before M2). Remote: `git@github.com:NJK-05/risc-v.git` (SSH). `.gitignore` covers `sim/`, `vivado/`, `zip_files/`.
+
 Update to the "completed" framing (naming OpenLane/SKY130 explicitly) once M7
 and M8 are done — see `docs/riscv_pipeline_spec.md` §nothing needed, just
 swap the wording as discussed previously in the project chat.
+
+## M3 — Forwarding unit added
+
+Status: ✅ Done. Update the milestone table (§6) and mark M4 as next up.
+
+### Modules added
+
+| Module | Purpose |
+|---|---|
+| `forwarding_unit.v` | Detects RAW hazards between the instruction currently in EX and the instructions in EX/MEM and MEM/WB; outputs 2-bit `forward_a`/`forward_b` selects |
+
+`riscv_core_top.v` was updated: the EX stage now computes `fwd_rs1_data`/`fwd_rs2_data` muxes ahead of the ALU inputs, and `ex_mem_reg`'s `rs2_data_in` (the store write-data path) now takes the forwarded value instead of the raw `id_ex_rs2_data` — stores need forwarding too, since that value bypasses the ALU entirely on its way into EX/MEM.
+
+### Design decisions made during M3
+
+- **EX/MEM forwarding takes priority over MEM/WB.** If both stages happen to target the same register, EX/MEM holds the more recent write.
+- **The MEM/WB forwarding source is `write_back_data`** (the already-muxed WB-stage output), not `mem_wb_alu_result` directly. This matters for loads: if the MEM/WB forwarding source were the raw ALU result, a forwarded load would supply its own address instead of the value it loaded.
+- **Forwarding does not solve load-use.** When a load is the immediate producer (distance 1), EX/MEM still only holds the load's *address* at that point — the actual loaded data isn't ready until the MEM stage completes, one cycle later, when it lands in MEM/WB. Confirmed by a deliberate negative test: removing the required 1-instruction gap causes `forward_a` to source from EX/MEM anyway (since `rd_addr` matches and `reg_write` is set), silently forwarding the address as if it were data — same address happened to be `0`, so the dependent `add` came out `0` instead of the correct `30`. This is exactly the hazard M4's stall exists to close.
+
+### Minimum spacing, updated from M2
+
+With forwarding, the 3-NOP spacing M2 needed is gone for ALU-producer chains — back-to-back dependent instructions (including stores depending on the immediately preceding instruction) now resolve automatically. The one exception: a load followed immediately by a dependent instruction still needs exactly 1 NOP, until M4 replaces it with a real stall.
+
+### Testbench
+
+`tb/tb_core_top_m3.v` (module name `tb_core_top_m3`) reuses M2's instruction mix with the NOP padding stripped out, keeping only the single load-use NOP. All 6 final-register checks pass. Verified the test isn't trivially passing by temporarily removing the load-use NOP in a scratch build — `x7` came out `0` instead of `30`, confirming the hazard is real and the testbench is actually catching it.

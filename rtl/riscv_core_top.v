@@ -1,8 +1,8 @@
 // 5-stage pipelined RV32I core.
 // IF -> ID -> EX -> MEM -> WB via if_id_reg, id_ex_reg, ex_mem_reg, mem_wb_reg.
 // Forwarding resolves EX-stage RAW hazards from EX/MEM and MEM/WB.
-// Not yet handled: load-use stall, branch/jump flush (stale in-flight
-// instructions on a taken branch aren't squashed yet).
+// Hazard detection stalls on load-use. Taken branches/jumps flush the
+// two in-flight instructions fetched after them.
 
 module riscv_core_top (
     input wire clk,
@@ -35,7 +35,7 @@ module riscv_core_top (
 
     if_id_reg if_id_reg_inst (
         .clk(clk), .rst_n(rst_n),
-        .stall(stall_hazard), .flush(1'b0),
+        .stall(stall_hazard), .flush(pc_src_ex),
         .pc_in(pc), .pc_plus4_in(pc_plus4_if), .instr_in(instr_if),
         .pc_out(if_id_pc), .pc_plus4_out(if_id_pc_plus4), .instr_out(if_id_instr)
     );
@@ -87,7 +87,7 @@ module riscv_core_top (
 
     id_ex_reg id_ex_reg_inst (
         .clk(clk), .rst_n(rst_n),
-        .stall(1'b0), .flush(stall_hazard),
+        .stall(1'b0), .flush(stall_hazard | pc_src_ex),
         .pc_in(if_id_pc), .pc_plus4_in(if_id_pc_plus4),
         .rs1_data_in(rs1_data_id), .rs2_data_in(rs2_data_id), .imm_in(imm_id),
         .rs1_addr_in(rs1_addr_id), .rs2_addr_in(rs2_addr_id), .rd_addr_in(rd_addr_id),

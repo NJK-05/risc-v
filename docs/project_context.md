@@ -238,3 +238,33 @@ Only M5 remains for hazard handling: branch/jump flush. EX-stage resolution alre
 ### Testbench
 
 `tb/tb_core_top_m4.v` (module name `tb_core_top_m4`).
+
+## M5 — Branch/jump flush logic added
+
+Status: ✅ Done. All hazard handling (M2–M5) is now complete. Update the milestone table (§6) and mark M6 (real compiled C program) as next up.
+
+### Modules added
+
+None — no new module needed. `riscv_core_top.v` was updated: `if_id_reg`'s `flush` port is now driven by `pc_src_ex` (was tied to `0`); `id_ex_reg`'s `flush` port is now `stall_hazard | pc_src_ex` (was `stall_hazard` alone).
+
+### Why no extra pipeline stage or register was needed
+
+`pc_src_ex` was already computed in M2 as combinational logic derived from `id_ex_reg`'s *current* output (the branch/jump instruction sitting in EX). The moment that instruction lands in `id_ex_reg`, `pc_src_ex` goes high immediately — in time to flush the *next* edge's updates to `if_id_reg` and `id_ex_reg`, which is exactly the cycle holding the two wrongly-fetched instructions. No new state was needed; M2's design already put the resolution signal in the right place, M5 just had to consume it.
+
+### Verification — and a real debugging story worth keeping
+
+Wrote `tb_core_top_m5.v`: a taken BEQ immediately followed by two instructions that must be squashed, each writing to its **own** register (`x9`, `x10`) rather than sharing one with the branch target's destination (`x11`). That mattered: an earlier version of this test used the same register for all three writes, and passed even with `flush` completely disabled — because the correct branch-target write happens *after* the squashed ones in program order and silently overwrote their wrong values, masking the exact bug the test was supposed to catch. Using separate registers made a flush failure directly visible instead of hideable.
+
+Running the corrected test then produced a real, unexpected failure: `x9=111`, `x10=222` — flush appeared broken. Traced it cycle-by-cycle and found the actual cause: the sandbox's minimal ALU stub only computed addition, so the BEQ equality check (which needs subtraction and a zero flag) could never fire — `ex_branch_taken` was stuck at `0`, meaning the branch never resolved as taken at all under the stub, so the "squashed" instructions were legitimately executing on a not-taken path. Not a bug in the real design or the flush wiring — an artifact of the stand-in ALU. Fixed the stub to do `SUB` when `alu_op == 2'b01` (branch comparison, per `control_unit.v`), re-ran, and the real flush logic passed cleanly.
+
+Negative control (flush forced off): reproduces exactly the original failure — `x9=111`, `x10=222` — confirming the test genuinely depends on the real flush logic and isn't a coincidental pass.
+
+Full regression: `tb_core_top_m2.v`, `tb_core_top_m3.v`, `tb_core_top_m4.v` all still pass against the M5 top — no hazard-handling regressions from adding the flush.
+
+### What this means for future testbenches
+
+Any testbench exercising a taken branch/jump needs an ALU capable of real subtraction and a correct zero flag, not just addition — obvious in retrospect, easy to trip over with a quick stand-in module. Your real `alu.v` presumably already does this correctly; this only bit the sandbox verification, not your actual Vivado environment.
+
+### Testbench
+
+`tb/tb_core_top_m5.v` (module name `tb_core_top_m5`).

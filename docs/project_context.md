@@ -268,3 +268,44 @@ Any testbench exercising a taken branch/jump needs an ALU capable of real subtra
 ### Testbench
 
 `tb/tb_core_top_m5.v` (module name `tb_core_top_m5`).
+
+## M6 — Real compiled C program runs correctly
+
+Status: 🔶 Partially done — all source/build/test infrastructure is in place and the mechanism is verified, but the actual compile-and-run step requires your local `gcc-riscv64-unknown-elf`, which isn't available in this environment. Run `sw/build.sh`, then the M6 testbench, to close this out for real.
+
+### Files added
+
+| File | Purpose |
+|---|---|
+| `sw/start.s` | Minimal startup: sets up the stack pointer, calls `main`, traps in an infinite loop on return (no OS to return to) |
+| `sw/main.c` | Test program: sums 1..10 in a real C `for` loop, stores the result to a fixed address (`0x100`) |
+| `sw/link.ld` | Linker script placing code/data at address 0, matching `imem`/`dmem`'s layout |
+| `sw/bin2hex.py` | Converts the compiled binary into one 32-bit hex word per line, matching `imem.v`'s word-indexed array so it loads directly via `$readmemh` with no `@address` offset headaches |
+| `sw/build.sh` | Runs the full toolchain: compile → `objcopy` to raw binary → `bin2hex.py` → `sw/program.hex` |
+| `tb/tb_core_top_m6.v` | Loads `sw/program.hex` via `$readmemh`, runs 200 cycles, checks `dmem[0x100/4] == 55` |
+
+### Why the result is observed via memory, not a UART
+
+This design has no console/UART, so there's no way to "print" the answer. The program writes its result to a fixed address instead, and the testbench reads it directly from `dmem_inst.mem` — same approach used throughout M1–M5, just now driven by compiler output instead of hand-assembled instructions.
+
+### Why `objcopy -O binary` + a custom Python script instead of `objcopy -O verilog`
+
+`objcopy -O verilog` emits byte addresses via `@address` directives, which don't line up with a word-indexed `$readmemh` target like `imem.v`'s `mem[]` array (indexed by word, not byte) without extra massaging. Converting to raw binary and packing 4 bytes (little-endian) per line sidesteps that entirely — the resulting file loads straight into word 0 onward with no addressing surprises.
+
+### What was actually verified here (without the real toolchain)
+
+Hand-wrote a synthetic RV32I program with the *same behavior* as `main.c` — sum 1..10, store 55 to `0x100`, then an infinite jump-to-self matching `start.s`'s halt loop — and ran it through `tb_core_top_m6.v` via the real `$readmemh` path. This confirms the loading mechanism, the testbench's result check, and the halt-loop behavior all work correctly. It does **not** confirm the real compiler output or your actual toolchain invocation — that only happens once you run `sw/build.sh` yourself.
+
+One cosmetic note: `$readmemh` will print a harmless `"Not enough words in the file for the requested range"` warning, since your program is much smaller than `imem`'s full 1024-word depth. Expected, not a bug — the unused words are simply never fetched.
+
+### To actually close out M6
+
+```bash
+cd sw
+./build.sh
+```
+Then point `tb_core_top_m6.v` at the generated `sw/program.hex` (already wired up — just make sure Vivado's simulation working directory can resolve that relative path, or adjust it) and run. If `dmem[64]` (word address `0x100/4`) reads `55`, M6 is genuinely done — mark it ✅ and update §6.
+
+### Testbench
+
+`tb/tb_core_top_m6.v` (module name `tb_core_top_m6`). Margin is generous (200 cycles) since a compiled loop is much longer than the hand-written M2–M5 test programs — increase it if your program needs more time to finish.

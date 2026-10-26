@@ -1,3 +1,4 @@
 sim/
 vivado_files/
 zip_files
+openlane/*/runs/

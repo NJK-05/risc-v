@@ -1,0 +1,21 @@
+{
+    "DESIGN_NAME": "riscv_core",
+    "VERILOG_FILES": [
+        "dir::../../rtl/alu.v",
+        "dir::../../rtl/alu_control.v",
+        "dir::../../rtl/control_unit.v",
+        "dir::../../rtl/ex_mem_reg.v",
+        "dir::../../rtl/forwarding_unit.v",
+        "dir::../../rtl/hazard_detection_unit.v",
+        "dir::../../rtl/id_ex_reg.v",
+        "dir::../../rtl/if_id_reg.v",
+        "dir::../../rtl/imm_gen.v",
+        "dir::../../rtl/mem_wb_reg.v",
+        "dir::../../rtl/pc_reg.v",
+        "dir::../../rtl/regfile.v",
+        "dir::../../rtl/riscv_core.v"
+    ],
+    "CLOCK_PORT": "clk",
+    "CLOCK_PERIOD": 25,
+    "FP_CORE_UTIL": 40
+}
